@@ -1,5 +1,5 @@
 #!/usr/bin/perl
-use Data::Dumper;
+#use Data::Dumper;
 use Getopt::Std;
 use Audio::Wav;
 use Math::FFT;
@@ -10,7 +10,7 @@ use warnings;
 use strict;
 #use vars qw( $opt_i $opt_o $opt_r $opt_s $opt_t );
 
-my $myver = "v1.3";
+my $myver = "v1.4";
 my $gnuplot = "gnuplot"; 
 my $sox = "sox"; 
 my $tmp_root = "/var/tmp";
@@ -31,6 +31,7 @@ my $description = "Tested on " . localtime();
 my $label = "";
 my $graph_log_base = 10;
 my $graph_size;# = "1920, 1080";
+my $graph_fix;
 my $playback_level = "0";
 
 my $stop_it_all = 0;
@@ -48,22 +49,7 @@ $SIG{TERM} = sub {
 my %options=();
 getopts('fhi:o:r:s:t:g:G:d:c:l:', \%options);
 
-if ( defined $options{h} )
-{
-  my $myname = $0;
-  $myname =~ s|(.*/)*||;
-  print "Stupid and slow Distortions Analyzer $myver by misterzu (c)2015\n";
-  print "Requires sox and alsa-utils (aplay, arecord).\n";
-#  print "Usage: $myname [playback_device [recording_device [sample_rate [raw_file]]]].\n";
-  print "Usage: $myname [-o playback_device] [-i recording_device] [-s sample_rate] [-c channel] [-l playback_level] [-t time] [-r raw_file] [-g graph_file [-G \"width, height\"]] [-d description] [-f] [-h]\n";
-  print "Defaults: $myname -o $dev_play -i $dev_record -s $sample_rate -c $analyze_channel -t $distorions_rec_time -d $description\n";
-  print "Clarifications:\n";
-  print "\t-f - make calculations bit faster by the cost of minor precision loss\n";
-  print "\t-h - show this help screen\n";
-  print "\t-l option's argument is a negative level in db's or zero (default)\n";
-  print "\t-g option requires gnuplot to be installed. Graph file name used with it should not include extension: frequency suffix + .gif extension will be added automatically.\n";
-  exit(1);
-}
+HELP_MESSAGE() if defined $options{h};
 
 $analyze_channel = $options{c} if defined $options{c};
 $faster = 1 if defined $options{f};
@@ -72,22 +58,19 @@ $dev_play = $options{o} if defined $options{o};
 $sample_rate = $options{s} if defined $options{s};
 $distorions_rec_time = $options{t} if defined $options{t};
 $description = $options{d} if defined $options{d};
-$graph_file = $options{g} if defined $options{g};
-if (defined $options{G})
+
+if (defined $options{g})
 {
-  $graph_size = $options{G};
-}
-elsif ($sample_rate <= 48000)
-{
-  $graph_size = "1920, 1080";
-}
-elsif ($sample_rate <= 96000)
-{
-  $graph_size = "3840, 1080";
-}
-else 
-{
-  $graph_size = "7680, 1080";
+  $graph_file = $options{g};
+  $graph_size = get_extended_option("G-size");
+  $graph_fix = get_extended_option("G-fix");
+  if ($graph_size eq "")
+  {
+    if ($sample_rate <= 48000) { $graph_size = "1920, 1080"; }
+    elsif ($sample_rate <= 96000) { $graph_size = "3840, 1080"; }
+    else  { $graph_size = "7680, 1080"; }
+  }
+  $graph_fix = -$graph_fix if $graph_fix ne "" && $graph_fix > 0;
 }
 
 if (defined $options{l})
@@ -162,6 +145,25 @@ while ($stop_it_all == 0)
 
 tmp_cleanup();
 
+sub HELP_MESSAGE
+{
+  my $myname = $0;
+  $myname =~ s|(.*/)*||;
+  print "Stupid and slow Distortions Analyzer $myver by misterzu (c)2015\n";
+  print "Requires sox and alsa-utils (aplay, arecord).\n";
+#  print "Usage: $myname [playback_device [recording_device [sample_rate [raw_file]]]].\n";
+  print "Usage: $myname [-o playback_device] [-i recording_device] [-s sample_rate] [-c channel] [-l playback_level] [-t time] [-r raw_file] [-g graph_file [--G-size=\"width, height\"] [--G-fix=level]] [-d description] [-f] [-h]\n";
+  print "Defaults: $myname -o $dev_play -i $dev_record -s $sample_rate -c $analyze_channel -t $distorions_rec_time -d $description\n";
+  print "Clarifications:\n";
+  print "\t-f - make calculations bit faster by the cost of minor precision loss\n";
+  print "\t-h - show this help screen\n";
+  print "\t-l option's argument is a negative level in db's or zero (default)\n";
+  print "\t-g option requires gnuplot to be installed. Graph file name used with it should not include extension: frequency suffix + .gif extension will be added automatically.\n";
+  print "\t--G-size option allows specifying graphics image size in pixels.\n";
+  print "\t--G-fix allows to set fixed signal level range on graphics, value must be specified in db.\n";
+
+  exit(1);
+}
 
 sub tmp_cleanup
 {
@@ -241,7 +243,12 @@ sub estimate_file_level
 
   my $lvl = get_level($bps, $max);
 
-  print "Current level=", nearest(0.01, 2.0 * $lvl), " db\n";
+  print "Current level=", nearest(0.01, 2.0 * $lvl), " db";
+  if ($lvl < -2)  { print " (LOW)\n"; }
+  elsif ($lvl < -1)  { print " (GOOD)\n"; }
+  elsif ($lvl < -0.5)  { print " (VERY GOOD)\n"; }
+  elsif ($lvl < -0.1)  { print " (TOO HIGH)\n"; }
+  else { print " (CLIPPING)\n"; }
 }
 
 sub get_level
@@ -378,15 +385,16 @@ sub analyze_file_distortions
     else { print "#"; }
   }
 
-  my $base_peakabs = $peakabs;
+  my ($base_peakabs, $base_peakphase) = ($peakabs, $peakphase);
   print "\nChannel $analyze_channel. SPL attenuated by " . nearest(0.1, $att_level) . " db.\n";
+  print "Normalized for base frequency ", round($peakfreq), " Hz\n";
   print "Hz \tDb \tDegrees\n";
-  print round($peakfreq)," \t0 \t", round($peakphase), "\n";
-  for (my $harm_index = 2; $harm_index < 5; ++$harm_index)
+  for (my $harm_index = 2; $harm_index <= 5; ++$harm_index)
   {
+    last if $test_frequency * $harm_index > $sample_freq / 2;
     ($peakabs, $peakphase, $peakfreq) = lookup_fft_peak($coeff, $sample_freq, $test_frequency * $harm_index);
     my $db = round(2 * ratio_db($peakabs, $base_peakabs));
-    print round($peakfreq)," \t", round($db), " \t", round($peakphase), "\n";
+    print round($peakfreq)," \t", round($db), " \t", round($peakphase - $harm_index * $base_peakphase), "\n";
   }
 
   write_raw_data($coeff, $sample_freq, $raw_file, $att_level) if $raw_file ne "";
@@ -435,7 +443,6 @@ sub write_raw_data
   print "Done\n";
 }
 
-
 sub write_graph
 {
   my $coeff = shift;
@@ -462,6 +469,10 @@ sub write_graph
   my ($h2_peak_abs, $h2_peak_phase, $h2_peak_freq) = lookup_fft_peak_normalized($coeff, $sample_freq, 2 * $test_frequency, $max_abs); 
   my ($h3_peak_abs, $h3_peak_phase, $h3_peak_freq) = lookup_fft_peak_normalized($coeff, $sample_freq, 3 * $test_frequency, $max_abs); 
   my ($h4_peak_abs, $h4_peak_phase, $h4_peak_freq) = lookup_fft_peak_normalized($coeff, $sample_freq, 4 * $test_frequency, $max_abs); 
+  $h2_peak_phase-= 2 * $h1_peak_phase;
+  $h3_peak_phase-= 3 * $h1_peak_phase;
+  $h4_peak_phase-= 4 * $h1_peak_phase;
+  $h1_peak_phase = 0;
 
   my $title = "Channel $analyze_channel";
   $title .= " ($label)" if $label ne "";
@@ -472,33 +483,38 @@ sub write_graph
   $ylabel .= ", playback level $playback_level db" if $playback_level ne "0";
   $ylabel .= ")";
 
+  my $set_yrange = "";
+  $set_yrange = "set yrange [$graph_fix:0]\n" if $graph_fix ne "";
+
   print "Executing $gnuplot... ";
   open(PLOT, "|$gnuplot") or die;
   print PLOT <<EOF;
 set term gif size $graph_size
 set output "$file"
-set size 1 ,1
+set size 1, 1
 set nokey
 set style data lines
 
 set title "$title\\n";
-
-set xlabel "$xlabel"
+set bmargin 3
+#set xlabel "$xlabel"
 set ylabel "$ylabel"
 
+$set_yrange
 set xrange [10:$max_freq]
 set logscale x $graph_log_base
-
 set mxtics
 set mytics
 set grid xtics ytics mytics
 
-set label "$h1_peak_phase°" at first $h1_peak_freq, 5 center
-set label "$h2_peak_phase°" at first $h2_peak_freq, 5 center
-set label "$h3_peak_phase°" at first $h3_peak_freq, 5 center
-set label "$h4_peak_phase°" at first $h4_peak_freq, 5 center
+set label 1 "$h2_peak_phase°" at first $h2_peak_freq, 5 center
+set label 2 "$h3_peak_phase°" at first $h3_peak_freq, 5 center
+set label 3 "$h4_peak_phase°" at first $h4_peak_freq, 5 center
+set label 4 "$xlabel" at character 10, 1
 
-plot "-" using 1:2 w lines axes x1y1
+set multiplot
+
+plot "-" using 1:2 w lines axes x1y1 lt rgb "#0000FF"
 EOF
 
   for (my $freq = 1; $freq<$max_freq; $freq+= $unit)
@@ -507,9 +523,103 @@ EOF
     print PLOT $freq, " \t", 2 * ratio_db($abs, $max_abs), "\t", $phase, "\n" if $abs > 0;
   }
   print PLOT "e\n";
-  close(PLOT);
 
+  print PLOT <<EOF;
+set yrange [-10:400]
+unset grid
+unset mxtics
+unset mytics
+unset xtics
+unset ytics
+unset xlabel
+unset ylabel
+unset label 1
+unset label 2
+unset label 3
+unset label 4
+unset title
+unset border
+unset logscale x
+set xrange [0:10000]
+set lmargin 8
+set bmargin 0
+EOF
+
+  my $kofs = 9970 / (log_N($graph_log_base, $max_freq) - 1); 
+  my $ofs = $kofs * (log_N($graph_log_base, $h2_peak_freq) - 1) - 150;
+  write_plot_distortion_icon ($ofs, $h1_peak_phase, $h2_peak_phase, 2, 300);
+  $ofs = $kofs * (log_N($graph_log_base, $h3_peak_freq) - 1) - 150;
+  write_plot_distortion_icon ($ofs, $h1_peak_phase, $h3_peak_phase, 3, 300);
+  $ofs = $kofs * (log_N($graph_log_base, $h4_peak_freq) - 1) - 150;
+  write_plot_distortion_icon ($ofs, $h1_peak_phase, $h4_peak_phase, 4, 300);
+  close(PLOT);
   print "Done\n";
+}
+
+sub write_plot_distortion_icon
+{
+  my $ofs = shift;
+  my $phase1 = shift;
+  my $phase2 = shift;
+  my $order = shift;
+  my $count = shift;
+
+  my @mix = (0) x $count;
+  add_harm_to_mix(\@mix, 10, $phase1, 1);
+  add_harm_to_mix(\@mix, 1.5, $phase2, $order);
+  normalize_mix(\@mix, 10);
+
+  print PLOT "plot \"-\" using 1:2 w lines axes x1y1 lt rgb \"#FF00FF\"\n";
+  for (my $i = 0; $i < $count; ++$i)
+  {
+    print PLOT ($ofs + $i) . " " . $mix[$i] . "\n"; 
+  }
+  print PLOT "e\n";
+}
+
+sub add_harm_to_mix
+{
+  my $target = shift;
+  my $abs = shift;
+  my $phase = shift;
+  my $order = shift;
+
+  my $samples = $#$target + 1;
+  my $delta = 2.0 * pi * $order / $samples;
+#-round($samples / 4)
+
+  for (my ($a, $i) = ($delta * $samples / 4 + pi / 2 + $phase * pi / 180, 0); $i < $samples; $a+= $delta, ++$i)
+  {
+      if ( $order == 1)
+      {
+        $target->[$i] = sin($a) * $abs;
+      }
+      else
+      {
+        $target->[$i]-= sin($a) * $abs;
+      }
+  }
+}
+
+sub normalize_mix
+{
+  my $target = shift;
+  my $limit_abs = shift;
+
+  my ($samples, $max_abs) = ($#$target + 1, 0);
+
+  for (my $i = 0; $i < $samples; ++$i)
+  {
+    $max_abs = abs($target->[$i]) if $max_abs < abs($target->[$i]);
+  }
+  if ($max_abs > 0)
+  {
+    my $normk = $limit_abs / $max_abs;
+    for (my $i = 0; $i < $samples; ++$i)
+    {
+      $target->[$i]*= $normk;
+    }
+  }
 }
 
 sub lookup_fft_peak_normalized
@@ -582,9 +692,18 @@ sub ratio_db
   return 10.0 * log_10( $dividend / $divisor );
 }
 
+
 sub log_10
 {
-  return log(shift)/log(10.0);
+  my $v = shift;
+  return log_N(10.0, $v);
+}
+
+sub log_N
+{
+  my $n = shift;
+  my $v = shift;
+  return log($v)/log($n);
 }
 
 sub waitpid_verbose
@@ -597,3 +716,15 @@ sub waitpid_verbose
   }
 }
 
+sub get_extended_option
+{
+  my $opt = shift;
+  my $argc = $#ARGV + 1;
+
+  for (my $i = 0; $i < $argc; ++$i)
+  {
+    return $1 if $ARGV[$i]=~ /^--$opt=(.*)/ ;
+  }
+
+  return "";
+}
