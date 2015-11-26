@@ -34,3 +34,6 @@ Mine EMU interface card number is 1 and device to be used 0, so minimal command 
 
 After that - follow instructions (mostly press <ENTER> when asked for this).
 
+Support urls:
+ - English: http://www.diyaudio.com/forums/software-tools/282766-yet-another-thd-measurement-drawing-tool-but-linux-written-perl.html
+ - Russian: http://forum.vegalab.ru/showthread.php?t=72818&p=2134404
