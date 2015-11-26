@@ -57,7 +57,7 @@ $graph_range = get_extended_option("g-range");
 $graph_logbase = get_extended_option("g-logbase");
 
 my %options=();
-getopts('fhi:o:r:s:t:g:G:d:c:l:b:', \%options);
+getopts('fhi:o:r:s:t:g:G:d:c:l:b:p:', \%options);
 
 HELP_MESSAGE() if defined $options{h};
 
@@ -69,6 +69,7 @@ $sample_rate = $options{s} if defined $options{s};
 $distorions_rec_time = $options{t} if defined $options{t};
 $description = $options{d} if defined $options{d};
 $batch = $options{b} if defined $options{b};
+$products_count = $options{p} if defined $options{p};
 
 if (defined $options{g})
 {
@@ -297,6 +298,18 @@ sub estimate_file_level
   else { print " (CLIPPING)\n"; }
 }
 
+sub round_thd
+{
+  my $value = shift;
+  return nearest(0.1, $value) if $value >= 1;
+  return nearest(0.01, $value) if $value >= 0.1;
+  return nearest(0.001, $value) if $value >= 0.01;
+  return nearest(0.0001, $value) if $value >= 0.001;
+  return nearest(0.00001, $value) if $value >= 0.0001;
+  # wow!
+  return $value; 
+}
+
 sub get_level
 {
   my $bps = shift;
@@ -447,7 +460,7 @@ sub analyze_file_distortions
   }
   $thd = round_thd(100.0 * sqrt($thd) / $base_peakabs);
   $thdx = round_thd(100.0 * sqrt($thdx) / $base_peakabs);
-  print "Totally weighed THD=$thd% THD'=$thdx%\n";
+  print "Weighed THD=$thd% THD'=$thdx%\n";
 
   write_raw_data($coeff, $sample_freq, $raw_file, $att_level, $thd, $thdx) if $raw_file ne "";
   if ($graph_file ne "")
@@ -457,18 +470,6 @@ sub analyze_file_distortions
     $graph_file_full .= ".gif";
     write_graph($coeff, $sample_freq, $graph_file_full, $att_level, $thd, $thdx);
   }
-}
-
-sub round_thd
-{
-  my $value = shift;
-  return nearest(0.1, $value) if $value >= 1;
-  return nearest(0.01, $value) if $value >= 0.1;
-  return nearest(0.001, $value) if $value >= 0.01;
-  return nearest(0.0001, $value) if $value >= 0.001;
-  return nearest(0.00001, $value) if $value >= 0.0001;
-  # wow!
-  return $value; 
 }
 
 sub write_raw_data
@@ -493,7 +494,7 @@ sub write_raw_data
     print out_raw "#Channel $analyze_channel. SPL attenuated by " . nearest(0.1, $att_level) . " db.\n";
     print out_raw "#", $label, "\n" if $label ne "";
     print out_raw "#Base frequency $test_frequency Hz\n";
-    print out_raw "#THD=$thd%, THD'=$thdx%\n";
+    print out_raw "#Weighed on $products_count products THD=$thd%, THD'=$thdx%\n";
 
     my $unit = $sample_freq / ($#$coeff + 1);
     for (my $freq = 1; $freq<($sample_freq/2); $freq+= $unit)
@@ -547,7 +548,7 @@ sub write_graph
   my $title = "Channel $analyze_channel";
   $title .= ", $label" if $label ne "";
   $title .= ", $description" if $description ne "";
-  $title .= ", THD=$thd% THD'=$thdx%. (Distortions Analyzer $myver by misterzu)";
+  $title .= ", THD=$thd% THD'=$thdx% (on $products_count products). Distortions Analyzer $myver by misterzu.";
 
   my $xlabel = "Frequency, Hz (sample rate $sample_rate)";
   my $ylabel = "SPL, db (attenuated by " . nearest(0.1, $att_level) . " db";
