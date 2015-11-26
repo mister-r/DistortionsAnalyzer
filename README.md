@@ -37,3 +37,16 @@ After that - follow instructions (mostly press <ENTER> when asked for this).
 Support urls:
  - English: http://www.diyaudio.com/forums/software-tools/282766-yet-another-thd-measurement-drawing-tool-but-linux-written-perl.html
  - Russian: http://forum.vegalab.ru/showthread.php?t=72818&p=2134404
+
+
+Changelog:
+v 1.5*
+ [ADDED] THD and THD' calculation
+ [ADDED] Added batch mode (-b option)
+ [ADDED] Added --g-logbase option
+ [CHANGED] --g-fix option renamed to --g-range
+
+v 1.4
+ [ADDED] Schemtic distortion 'look' glyphs
+ [ADDED] --g-fix option
+ [CHABGED] Correct phases to zero main frequency phase

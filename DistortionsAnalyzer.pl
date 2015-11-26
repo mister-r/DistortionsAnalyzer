@@ -1,5 +1,5 @@
 #!/usr/bin/perl
-#use Data::Dumper;
+
 use Getopt::Std;
 use Audio::Wav;
 use Math::FFT;
@@ -8,9 +8,9 @@ use Math::Round qw(:all);
 use POSIX ":sys_wait_h";
 use warnings;
 use strict;
-#use vars qw( $opt_i $opt_o $opt_r $opt_s $opt_t );
 
-my $myver = "v1.4";
+# settings
+my $myver = "v1.5";
 my $gnuplot = "gnuplot"; 
 my $sox = "sox"; 
 my $tmp_root = "/var/tmp";
@@ -18,6 +18,7 @@ my $tmp_wavplay = "$tmp_root/fft_play.wav";
 my $tmp_wavrec = "$tmp_root/fft_rec.wav";
 my $tmp_std = "$tmp_root/fft_std.txt";
 
+# options
 my $dev_play = "hw:1,0";
 my $dev_record = "hw:1,0";
 my $sample_rate = "48000";
@@ -29,11 +30,16 @@ my $graph_file = "";
 my $faster = 0;
 my $description = "Tested on " . localtime();
 my $label = "";
-my $graph_log_base = 10;
-my $graph_size;# = "1920, 1080";
-my $graph_fix;
 my $playback_level = "0";
+my $batch = "";
+my $products_count = 5;
 
+# extended options
+my $graph_logbase;
+my $graph_size;
+my $graph_range;
+
+# state
 my $stop_it_all = 0;
 my $raw_description_written = 0;
 
@@ -47,10 +53,11 @@ $SIG{TERM} = sub {
 };
 
 $graph_size = get_extended_option("g-size");
-$graph_fix = get_extended_option("g-fix");
+$graph_range = get_extended_option("g-range");
+$graph_logbase = get_extended_option("g-logbase");
 
 my %options=();
-getopts('fhi:o:r:s:t:g:G:d:c:l:', \%options);
+getopts('fhi:o:r:s:t:g:G:d:c:l:b:', \%options);
 
 HELP_MESSAGE() if defined $options{h};
 
@@ -61,6 +68,7 @@ $dev_play = $options{o} if defined $options{o};
 $sample_rate = $options{s} if defined $options{s};
 $distorions_rec_time = $options{t} if defined $options{t};
 $description = $options{d} if defined $options{d};
+$batch = $options{b} if defined $options{b};
 
 if (defined $options{g})
 {
@@ -71,7 +79,8 @@ if (defined $options{g})
     elsif ($sample_rate <= 96000) { $graph_size = "3840, 1080"; }
     else  { $graph_size = "7680, 1080"; }
   }
-  $graph_fix = -$graph_fix if $graph_fix ne "" && $graph_fix > 0;
+  $graph_range = -$graph_range if $graph_range ne "" && $graph_range > 0;
+  $graph_logbase = "10" if $graph_logbase eq "";
 }
 
 if (defined $options{l})
@@ -91,57 +100,24 @@ if (defined $options{r})
 #  print "Raw data will be written to $raw_file\n";
 }
 
-print "Using $dev_play for playback, $dev_record for recording, $sample_rate samples per second\n";
-print "Press <ENTER> to adjust levels or <Ctrl+C>, <ENTER> to exit\n";
-
-getc(STDIN);
-die "Cancelled" if $stop_it_all != 0;
-
 $| = 1;
 
 tmp_cleanup();
 
-system ("reset");
-print "\n---------------------------\n";
-print "INPUT LEVEL ADJUSTEMENT\n";
-print "Now script periodically outputs 1KHz via playback device and analyzes whats coming from recording device, calculating estimated level.";
-print "Please use physical regulators to adjust level between -2..-0.5 db and press <ENTER> to continue with distortion analyzis.\n";
-print "If you want to cancel everything and exit - press <Ctrl+C> and then <ENTER>\n";
-print "\n---------------------------\n";
-
-my $estimator_pid = fork();
-if ($estimator_pid==0)
+if ($batch eq "")
 {
-  while ($stop_it_all == 0)
-  {
-    play_and_record(\&estimate_file_level, 1, 0);
-  }
-  exit(0);
-}
-getc(STDIN);
-print "Got <ENTER> keypress, wait a moment please...\n";
-kill ('TERM', $estimator_pid);
-waitpid_verbose($estimator_pid);
+  print "Using $dev_play for playback, $dev_record for recording, $sample_rate samples per second\n";
+  print "Press <ENTER> to adjust levels or <Ctrl+C>, <ENTER> to exit\n";
 
-while ($stop_it_all == 0)
-{
-  system("reset");
-  print "\n---------------------------\n";
-  print "DISTORTIONS ANALYZIS\n";
-
-  $test_frequency = ask_value("Specify base frequency, Hz", $test_frequency);
-  $test_frequency = $test_frequency + 0;  
-
-  if ($graph_file ne "" || $raw_file ne "")
-  {
-    $label = ask_value("Specify one word label for this test", $label);
-    $label=~ s/[^\w]//g;
-  }
-
-  print "Base frequency set to $test_frequency Hz\n";
-  play_and_record(\&analyze_file_distortions,  $distorions_rec_time, 1);
-  print "Press <ENTER> to re-start distorions test or <Ctrl+C>, <ENTER> to exit\n";
   getc(STDIN);
+  die "Cancelled" if $stop_it_all != 0;
+
+  interactive_level_adjustement();
+  interactive_distortions_analyzis();
+}
+else
+{
+  batch_distortions_analyzis();
 }
 
 tmp_cleanup();
@@ -153,15 +129,17 @@ sub HELP_MESSAGE
   print "Stupid and slow Distortions Analyzer $myver by misterzu (c)2015\n";
   print "Requires sox and alsa-utils (aplay, arecord).\n";
 #  print "Usage: $myname [playback_device [recording_device [sample_rate [raw_file]]]].\n";
-  print "Usage: $myname [-o playback_device] [-i recording_device] [-s sample_rate] [-c channel] [-l playback_level] [-t time] [-r raw_file] [-g graph_file [--g-size=\"width, height\"] [--g-fix=level]] [-d description] [-f] [-h]\n";
-  print "Defaults: $myname -o $dev_play -i $dev_record -s $sample_rate -c $analyze_channel -t $distorions_rec_time -d $description\n";
+  print "Usage: $myname [-o playback_device] [-i recording_device] [-s sample_rate] [-c channel] [-l playback_level] [-t time] [-r raw_file] [-g graph_file [--g-size=\"width, height\"] [--g-range=level] [--g-logbase=value] ] [-p products_count] [-d description] [-b \"batch_sequence\"] [-f] [-h]\n";
+  print "Defaults: $myname -o $dev_play -i $dev_record -s $sample_rate -c $analyze_channel -t $distorions_rec_time -p $products_count -d $description\n";
   print "Clarifications:\n";
   print "\t-f - make calculations bit faster by the cost of minor precision loss\n";
-  print "\t-h - show this help screen\n";
-  print "\t-l option's argument is a negative level in db's or zero (default)\n";
+  print "\t-h - show this help screen.\n";
+  print "\t-l option's argument is a negative level in db's or zero (default).\n";
+  print "\t-b enables batch processing (without level adjustement and prompts), its argument - sequence of frequencies to be tested separated by commas, each frequency can be optionally prepended by label, separated by colon. Example: -b \"One KHz:1000, Other:2000,5000,10000\"\n";
   print "\t-g option requires gnuplot to be installed. Graph file name used with it should not include extension: frequency suffix + .gif extension will be added automatically.\n";
-  print "\t--g-size option allows specifying graphics image size in pixels.\n";
-  print "\t--g-fix allows to set fixed signal level range on graphics, value must be specified in db.\n";
+  print "\t--g-size option specifies graphics image size in pixels. If not specified then defaulted to \"1920, 1080\" .. \"7680, 1080\" depending on selected sample rate\n";
+  print "\t--g-range sets fixed signal level range on graphics, value must be specified in db.\n";
+  print "\t--g-logbase specifies frequencies axis logarithmic scaling base. Default is 10.\n";
 
   exit(1);
 }
@@ -171,6 +149,73 @@ sub tmp_cleanup
   unlink($tmp_wavplay);
   unlink($tmp_wavrec);
   unlink($tmp_std);
+}
+
+sub interactive_level_adjustement
+{
+  system ("reset");
+  print "\n---------------------------\n";
+  print "INPUT LEVEL ADJUSTEMENT\n";
+  print "Now script periodically outputs 1KHz via playback device and analyzes whats coming from recording device, calculating estimated level.";
+  print "Please use physical regulators to adjust level between -2..-0.5 db and press <ENTER> to continue with distortion analyzis.\n";
+  print "If you want to cancel everything and exit - press <Ctrl+C> and then <ENTER>\n";
+  print "\n---------------------------\n";
+
+  my $estimator_pid = fork();
+  if ($estimator_pid==0)
+  {
+    while ($stop_it_all == 0)
+    {
+      play_and_record(\&estimate_file_level, 1, 0);
+    }
+    exit(0);
+  }
+  getc(STDIN);
+  print "Got <ENTER> keypress, wait a moment please...\n";
+  kill ('TERM', $estimator_pid);
+  waitpid_verbose($estimator_pid);
+}
+
+sub batch_distortions_analyzis
+{
+  my @arr = split ',', $batch;
+
+  foreach my $entry (@arr)
+  {
+    my @subarr = split ':', $entry;
+    next if $#subarr==-1;
+
+    if ($#subarr==0)
+    {
+      $test_frequency = $subarr[0];
+    }
+    else
+    {
+      $test_frequency = $subarr[1];
+      $label = $subarr[0];
+      print "Selected label \"$label\". ";
+    }
+    print "Selected base frequency $test_frequency Hz.\n";
+    play_and_record(\&analyze_file_distortions,  $distorions_rec_time, 1);
+  }
+}
+
+sub interactive_distortions_analyzis
+{
+  while ($stop_it_all == 0)
+  {
+    system("reset");
+    print "\n---------------------------\n";
+    print "DISTORTIONS ANALYZIS\n";
+
+    $test_frequency = ask_value("Specify base frequency, Hz", $test_frequency);
+    $label = ask_value("Specify one word label for this test", $label) if $graph_file ne "" || $raw_file ne "";
+
+    print "Base frequency set to $test_frequency Hz\n";
+    play_and_record(\&analyze_file_distortions,  $distorions_rec_time, 1);
+    print "Press <ENTER> to re-start distorions test or <Ctrl+C>, <ENTER> to exit\n";
+    getc(STDIN);
+  }
 }
 
 sub ask_value
@@ -244,10 +289,10 @@ sub estimate_file_level
 
   my $lvl = get_level($bps, $max);
 
-  print "Current level=", nearest(0.01, 2.0 * $lvl), " db";
+  print "Current level=", nearest(0.01, $lvl), " db";
   if ($lvl < -2)  { print " (LOW)\n"; }
   elsif ($lvl < -1)  { print " (GOOD)\n"; }
-  elsif ($lvl < -0.5)  { print " (VERY GOOD)\n"; }
+  elsif ($lvl < -0.5)  { print " (IDEAL)\n"; }
   elsif ($lvl < -0.1)  { print " (TOO HIGH)\n"; }
   else { print " (CLIPPING)\n"; }
 }
@@ -265,8 +310,9 @@ sub get_level
 sub analyze_file_distortions
 {
   my $file = shift;
-#  my $raw_output_file = shift;
-#  my $filtered_output_file = shift;
+
+  chomp($test_frequency);
+  $label=~ s/[^\w]//g;
   print "Started distortions analyzis... ";
 
   my $wav = new Audio::Wav;
@@ -315,7 +361,7 @@ sub analyze_file_distortions
     ++$samples_clipped if $sample >= $cliplvl;
     ++$samples_read;
   }
-  my $att_level = 2.0 * ratio_db($cliplvl, $max_abs_sample);
+  my $att_level = ratio_db($cliplvl, $max_abs_sample);
 
   print "Loaded $samples_read samples: $time seconds of $sample_freq samples/second.\n";
   print STDERR "$samples_clipped SAMPLES ARE CLIPPED\n" if $samples_clipped != 0; 
@@ -386,26 +432,43 @@ sub analyze_file_distortions
     else { print "#"; }
   }
 
-  my ($base_peakabs, $base_peakphase) = ($peakabs, $peakphase);
-  print "\nChannel $analyze_channel. SPL attenuated by " . nearest(0.1, $att_level) . " db.\n";
-  print "Normalized for base frequency ", round($peakfreq), " Hz\n";
+  my ($base_peakabs, $base_peakphase, $thd, $thdx) = ($peakabs, $peakphase, 0, 0);
+  print "\nChannel $analyze_channel. Level attenuated by " . nearest(0.1, $att_level) . " db.\n";
+  print "Distortions products table for base frequency ", round($peakfreq), " Hz\n";
   print "Hz \tDb \tDegrees\n";
-  for (my $harm_index = 2; $harm_index <= 5; ++$harm_index)
+  for (my $harm_index = 2; $harm_index <= $products_count; ++$harm_index)
   {
     last if $test_frequency * $harm_index > $sample_freq / 2;
     ($peakabs, $peakphase, $peakfreq) = lookup_fft_peak($coeff, $sample_freq, $test_frequency * $harm_index);
-    my $db = round(2 * ratio_db($peakabs, $base_peakabs));
+    my $db = ratio_db($peakabs, $base_peakabs);
     print round($peakfreq)," \t", round($db), " \t", round($peakphase - $harm_index * $base_peakphase), "\n";
+    $thd+= $peakabs * $peakabs;
+    $thdx+= $peakabs * $peakabs * $harm_index * $harm_index / 4;
   }
+  $thd = round_thd(100.0 * sqrt($thd) / $base_peakabs);
+  $thdx = round_thd(100.0 * sqrt($thdx) / $base_peakabs);
+  print "Totally weighed THD=$thd% THD'=$thdx%\n";
 
-  write_raw_data($coeff, $sample_freq, $raw_file, $att_level) if $raw_file ne "";
+  write_raw_data($coeff, $sample_freq, $raw_file, $att_level, $thd, $thdx) if $raw_file ne "";
   if ($graph_file ne "")
   {
     my $graph_file_full = $graph_file . "_$test_frequency";
     $graph_file_full .= "_$label" if $label ne "";
     $graph_file_full .= ".gif";
-    write_graph($coeff, $sample_freq, $graph_file_full, $att_level);
+    write_graph($coeff, $sample_freq, $graph_file_full, $att_level, $thd, $thdx);
   }
+}
+
+sub round_thd
+{
+  my $value = shift;
+  return nearest(0.1, $value) if $value >= 1;
+  return nearest(0.01, $value) if $value >= 0.1;
+  return nearest(0.001, $value) if $value >= 0.01;
+  return nearest(0.0001, $value) if $value >= 0.001;
+  return nearest(0.00001, $value) if $value >= 0.0001;
+  # wow!
+  return $value; 
 }
 
 sub write_raw_data
@@ -414,6 +477,8 @@ sub write_raw_data
   my $sample_freq = shift;
   my $file = shift;
   my $att_level = shift;
+  my $thd = shift;
+  my $thdx = shift;
 
   if (open(out_raw, ">>$file"))
   {
@@ -428,6 +493,8 @@ sub write_raw_data
     print out_raw "#Channel $analyze_channel. SPL attenuated by " . nearest(0.1, $att_level) . " db.\n";
     print out_raw "#", $label, "\n" if $label ne "";
     print out_raw "#Base frequency $test_frequency Hz\n";
+    print out_raw "#THD=$thd%, THD'=$thdx%\n";
+
     my $unit = $sample_freq / ($#$coeff + 1);
     for (my $freq = 1; $freq<($sample_freq/2); $freq+= $unit)
     {
@@ -450,6 +517,8 @@ sub write_graph
   my $sample_freq = shift;
   my $file = shift;
   my $att_level = shift;
+  my $thd = shift;
+  my $thdx = shift;
 
   print "Writing graph file $file... ";
 
@@ -476,8 +545,9 @@ sub write_graph
   $h1_peak_phase = 0;
 
   my $title = "Channel $analyze_channel";
-  $title .= " ($label)" if $label ne "";
-  $title .= ". $description (generated by Distortions Analyzer $myver by misterzu)";
+  $title .= ", $label" if $label ne "";
+  $title .= ", $description" if $description ne "";
+  $title .= ", THD=$thd% THD'=$thdx%. (Distortions Analyzer $myver by misterzu)";
 
   my $xlabel = "Frequency, Hz (sample rate $sample_rate)";
   my $ylabel = "SPL, db (attenuated by " . nearest(0.1, $att_level) . " db";
@@ -485,7 +555,7 @@ sub write_graph
   $ylabel .= ")";
 
   my $set_yrange = "";
-  $set_yrange = "set yrange [$graph_fix:0]\n" if $graph_fix ne "";
+  $set_yrange = "set yrange [$graph_range:0]\n" if $graph_range ne "";
 
   print "Executing $gnuplot... ";
   open(PLOT, "|$gnuplot") or die;
@@ -503,7 +573,7 @@ set ylabel "$ylabel"
 
 $set_yrange
 set xrange [10:$max_freq]
-set logscale x $graph_log_base
+set logscale x $graph_logbase
 set mxtics
 set mytics
 set grid xtics ytics mytics
@@ -521,7 +591,7 @@ EOF
   for (my $freq = 1; $freq<$max_freq; $freq+= $unit)
   {
     my ($abs, $phase) = get_fft_point($coeff, $sample_freq, $freq);
-    print PLOT $freq, " \t", 2 * ratio_db($abs, $max_abs), "\t", $phase, "\n" if $abs > 0;
+    print PLOT $freq, " \t", ratio_db($abs, $max_abs), "\t", $phase, "\n" if $abs > 0;
   }
   print PLOT "e\n";
 
@@ -546,12 +616,12 @@ set lmargin 8
 set bmargin 0
 EOF
 
-  my $kofs = 9970 / (log_N($graph_log_base, $max_freq) - 1); 
-  my $ofs = $kofs * (log_N($graph_log_base, $h2_peak_freq) - 1) - 150;
+  my $kofs = 9970 / (log_graph($max_freq) - 1); 
+  my $ofs = $kofs * (log_graph($h2_peak_freq) - 1) - 150;
   write_plot_distortion_icon ($ofs, $h1_peak_phase, $h2_peak_phase, 2, 300);
-  $ofs = $kofs * (log_N($graph_log_base, $h3_peak_freq) - 1) - 150;
+  $ofs = $kofs * (log_graph($h3_peak_freq) - 1) - 150;
   write_plot_distortion_icon ($ofs, $h1_peak_phase, $h3_peak_phase, 3, 300);
-  $ofs = $kofs * (log_N($graph_log_base, $h4_peak_freq) - 1) - 150;
+  $ofs = $kofs * (log_graph($h4_peak_freq) - 1) - 150;
   write_plot_distortion_icon ($ofs, $h1_peak_phase, $h4_peak_phase, 4, 300);
   close(PLOT);
   print "Done\n";
@@ -631,7 +701,7 @@ sub lookup_fft_peak_normalized
   my $reference_level = shift;
 
   my ($outabs, $outphase, $outfreq) = lookup_fft_peak($coeff, $sample_freq, $lookup_freq);
-  $outabs = 2 * ratio_db($outabs, $reference_level) if $outabs;
+  $outabs = ratio_db($outabs, $reference_level) if $outabs;
   return (round($outabs), round($outphase), round($outfreq));
 }
 
@@ -690,9 +760,15 @@ sub ratio_db
 {
   my $dividend = shift;
   my $divisor = shift;
-  return 10.0 * log_10( $dividend / $divisor );
+  return 20.0 * log_10( $dividend / $divisor );
 }
 
+
+sub log_graph
+{
+  my $v = shift;
+  return log_N($graph_logbase, $v);
+}
 
 sub log_10
 {
@@ -726,8 +802,9 @@ sub get_extended_option
   {
     if ($ARGV[$i]=~ /^--$opt=(.*)/ )
     {
+      my $v = $1;
       splice @ARGV, $i, 1;
-      return unquote($1);
+      return $v;
     }
   }
 
