@@ -46,6 +46,9 @@ $SIG{TERM} = sub {
 # print "Got SIGTERM $!\n" ;
 };
 
+$graph_size = get_extended_option("g-size");
+$graph_fix = get_extended_option("g-fix");
+
 my %options=();
 getopts('fhi:o:r:s:t:g:G:d:c:l:', \%options);
 
@@ -62,8 +65,6 @@ $description = $options{d} if defined $options{d};
 if (defined $options{g})
 {
   $graph_file = $options{g};
-  $graph_size = get_extended_option("G-size");
-  $graph_fix = get_extended_option("G-fix");
   if ($graph_size eq "")
   {
     if ($sample_rate <= 48000) { $graph_size = "1920, 1080"; }
@@ -152,15 +153,15 @@ sub HELP_MESSAGE
   print "Stupid and slow Distortions Analyzer $myver by misterzu (c)2015\n";
   print "Requires sox and alsa-utils (aplay, arecord).\n";
 #  print "Usage: $myname [playback_device [recording_device [sample_rate [raw_file]]]].\n";
-  print "Usage: $myname [-o playback_device] [-i recording_device] [-s sample_rate] [-c channel] [-l playback_level] [-t time] [-r raw_file] [-g graph_file [--G-size=\"width, height\"] [--G-fix=level]] [-d description] [-f] [-h]\n";
+  print "Usage: $myname [-o playback_device] [-i recording_device] [-s sample_rate] [-c channel] [-l playback_level] [-t time] [-r raw_file] [-g graph_file [--g-size=\"width, height\"] [--g-fix=level]] [-d description] [-f] [-h]\n";
   print "Defaults: $myname -o $dev_play -i $dev_record -s $sample_rate -c $analyze_channel -t $distorions_rec_time -d $description\n";
   print "Clarifications:\n";
   print "\t-f - make calculations bit faster by the cost of minor precision loss\n";
   print "\t-h - show this help screen\n";
   print "\t-l option's argument is a negative level in db's or zero (default)\n";
   print "\t-g option requires gnuplot to be installed. Graph file name used with it should not include extension: frequency suffix + .gif extension will be added automatically.\n";
-  print "\t--G-size option allows specifying graphics image size in pixels.\n";
-  print "\t--G-fix allows to set fixed signal level range on graphics, value must be specified in db.\n";
+  print "\t--g-size option allows specifying graphics image size in pixels.\n";
+  print "\t--g-fix allows to set fixed signal level range on graphics, value must be specified in db.\n";
 
   exit(1);
 }
@@ -723,7 +724,11 @@ sub get_extended_option
 
   for (my $i = 0; $i < $argc; ++$i)
   {
-    return $1 if $ARGV[$i]=~ /^--$opt=(.*)/ ;
+    if ($ARGV[$i]=~ /^--$opt=(.*)/ )
+    {
+      splice @ARGV, $i, 1;
+      return unquote($1);
+    }
   }
 
   return "";
