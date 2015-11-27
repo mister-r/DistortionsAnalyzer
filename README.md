@@ -8,15 +8,15 @@ Also it has feature - unlike most other similar software it outputs not only lev
   - THD' = 100 * sqrt(sum(Uk*Uk*k*k/4)) / U1 [k=2..products_count+1]  - this is THD weighting used by BBC engeneers in 1950s, it addresses effect of greater audibility of higher order harmonics products.
 - Can run in manually controlled or batch mode:
  - Manually controlled mode first allows user to adjust level and then performs distortions analyzis with iteractively entered frequencies and 'labels' that used to mark graphics and raw file records.
- - Batch mode executes distortion analyzis tests on frequencies/labels gived from command line. It doesn't require user input so can me used in automated environment.
+ - Batch mode executes distortion analyzis tests on frequencies/labels gived from command line. It doesn't require user input so can be used in automated environment.
 - Wide customization options (see command line help)
 
 
-Preparing: Install Perl if you don;t have it, run cpan and one by one execute following commands in cpan console to install required Perl packages:
+Preparing: Install Perl if you don't have it, run cpan and one by one execute following commands in cpan console to install required Perl packages:
 install Audio::Wav
 install Math::FFT
 install Math::Trig
-install Math::Round qw(:all)
+install Math::Round
 
 Install gnuplot if you don't have it (if you want to get graphical spectrums images).
 For command line options help type: ./DistortionsAnalyzer.pl -h
@@ -43,9 +43,10 @@ Mine EMU interface card number is 1 and device to be used 0, so minimal command 
 
 After that - follow instructions (mostly press <ENTER> when asked for this).
 
-Support urls:
- - English: http://www.diyaudio.com/forums/software-tools/282766-yet-another-thd-measurement-drawing-tool-but-linux-written-perl.html
- - Russian: http://forum.vegalab.ru/showthread.php?t=72818&p=2134404
+Urls:
+ - Project site: https://github.com/mister-r/DistortionsAnalyzer/
+ - English support: http://www.diyaudio.com/forums/software-tools/282766-yet-another-thd-measurement-drawing-tool-but-linux-written-perl.html
+ - Russian support: http://forum.vegalab.ru/showthread.php?t=72818&p=2134404
 
 
 Changelog:
