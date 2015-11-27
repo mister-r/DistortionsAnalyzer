@@ -449,7 +449,7 @@ sub analyze_file_distortions
   print "\nChannel $analyze_channel. Level attenuated by " . nearest(0.1, $att_level) . " db.\n";
   print "Distortions products table for base frequency ", round($peakfreq), " Hz\n";
   print "Hz \tDb \tDegrees\n";
-  for (my $harm_index = 2; $harm_index <= $products_count; ++$harm_index)
+  for (my $harm_index = 2; $harm_index <= ($products_count + 1); ++$harm_index)
   {
     last if $test_frequency * $harm_index > $sample_freq / 2;
     ($peakabs, $peakphase, $peakfreq) = lookup_fft_peak($coeff, $sample_freq, $test_frequency * $harm_index);
