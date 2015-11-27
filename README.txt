@@ -18,7 +18,7 @@ install Math::FFT
 install Math::Trig
 install Math::Round
 
-Install gnuplot if you don't have it (if you want to get graphical spectrums images).
+Install gnuplot and sox if you don't have it (if you want to get graphical spectrums images).
 For command line options help type: ./DistortionsAnalyzer.pl -h
 
 Usage:
